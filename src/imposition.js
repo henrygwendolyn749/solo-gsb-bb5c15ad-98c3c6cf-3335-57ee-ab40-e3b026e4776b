@@ -5,6 +5,7 @@ const { parseProductionMarksInput, attachProductionMarks } = require('./producti
 const { attachVerification } = require('./verification');
 const { parseMaterialPrepInput, attachMaterialPrep } = require('./materialPrep');
 const { parsePurchaseQuotesInput, attachPurchaseQuotes } = require('./purchaseQuote');
+const { parseDualVersionInput, attachDualVersion } = require('./dualVersion');
 
 /**
  * 骑马钉（saddle-stitch）拼版计算核心。
@@ -89,6 +90,16 @@ const { parsePurchaseQuotesInput, attachPurchaseQuotes } = require('./purchaseQu
  * - 逐报价返回采购包数 / 张数 / 金额（分）/ 可购余量；无可行组合时返回
  *   feasible: false 与具体缺口张数（rows 按各报价上限给出尽最大可购量）。
  * - purchaseQuotes 缺省 / null / false 时不启用，不写入任何字段，原响应完全不变。
+ *
+ * 双版本共版印刷清单（dual-version shared-plate printing）：
+ * - 可选提供 dualVersion { copiesA, copiesB, changedPages }（A 版份数 / B 版份数 /
+ *   B 版相对 A 版改动的真实页码；改动页支持单页与区间写法，自动去重并校验
+ *   1 ~ totalPages 范围），沿用当前分帖、补白、装订与翻转后的页位，
+ *   逐张逐面判定该面是否含 B 版改动页：无改动的面共用一块印版（印次 = A + B），
+ *   含改动页的面拆成 A、B 两块印版各按自身份数印刷，同张纸正背面独立判定。
+ * - 顶层 dualVersion 段逐面给出帖 / 张 / 面 / 页码 / 印版归属与各印版印次，
+ *   并汇总面数、印版数（含较全部拆版节省的印版数）与总印次。
+ * - dualVersion 缺省 / null / false 时不启用，不写入任何字段，原响应完全不变。
  */
 
 const MAX_TOTAL_PAGES = 10000;
@@ -262,11 +273,16 @@ function planChapterSignatures(totalPages, maxSheets, starts) {
  *   { demandSheets 手工需求张数（可选，缺省取 materialPrep 整包采购张数）,
  *     quotes: [{ supplier 供应商, sheetsPerPack 每包张数, pricePerPackCents 每包价格（分）,
  *     minPacks 最少可购包数, maxPacks 最多可购包数 }] }
+ * @param {object|boolean} [input.dualVersion] 双版本共版印刷参数（缺省 / null / false 不启用）：
+ *   { copiesA A 版成品份数（≥1 整数）, copiesB B 版成品份数（≥1 整数）,
+ *     changedPages B 版相对 A 版改动的真实页码（单页与区间，去重并校验 1 ~ totalPages，
+ *     如 [3, "5-8"] 或 "3, 5-8"） }
  * @returns {object} 拼版结果（按帖 -> 张 -> 正/背面 -> 左/右页位；启用适配检查时每个页位带 fit；
  *                   启用双面生产标记时每张纸带 productionMarks、顶层带 productionMarks 汇总；
  *                   启用试印核验时顶层带 verification：观察、候选评分与结论；
  *                   启用印刷备料时顶层带 materialPrep：逐帖净用纸 / 损耗 / 需领纸与整包采购汇总；
- *                   启用采购报价组合时顶层带 purchaseQuotes：逐报价采购量 / 金额 / 余量、总价与缺口）
+ *                   启用采购报价组合时顶层带 purchaseQuotes：逐报价采购量 / 金额 / 余量、总价与缺口；
+ *                   启用双版本共版时顶层带 dualVersion：逐面印版归属 / 印次与印版、印次汇总）
  */
 function computeImposition(input) {
   const totalPages = toInteger(input && input.totalPages);
@@ -309,6 +325,9 @@ function computeImposition(input) {
   if (chapterSplit && balancedSplit) {
     throw new Error('章节优先分帖与均衡分帖不能同时启用，请只选择一种分帖模式');
   }
+  // 双版本共版印刷清单：缺省 / null / false / { enabled: false } 不启用；
+  // 启用时校验 A / B 版份数与 B 版改动页码（单页 + 区间，去重并校验 1 ~ totalPages）。
+  const dualVersion = parseDualVersionInput(input || {}, totalPages);
 
   const maxPagesPerSignature = sheetsPerSignature * 4;
 
@@ -490,7 +509,7 @@ function computeImposition(input) {
   const result = {
     meta: {
       app: 'saddle-stitch-imposition',
-      version: '1.9.0',
+      version: '1.10.0',
       generatedAt: new Date().toISOString(),
     },
     input: {
@@ -570,6 +589,15 @@ function computeImposition(input) {
   const purchaseQuotesResult = attachPurchaseQuotes(result, purchaseQuotes, fallbackSheets);
   if (purchaseQuotesResult) {
     result.purchaseQuotes = purchaseQuotesResult;
+  }
+
+  // 双版本共版印刷清单：dualVersion 缺省 / null / false 时不写入任何字段，原响应完全不变；
+  // 启用后沿用当前分帖 / 补白 / 装订 / 翻转后的页位，逐张逐面判定是否含 B 版改动页——
+  // 无改动的面共用一块印版（印次 = A + B），含改动页的面拆成 A、B 两块印版各按自身份数印刷，
+  // 同张纸正背面独立判定；逐面给出页码 / 印版归属 / 印次并汇总印版数与总印次。
+  const dualVersionResult = attachDualVersion(result, dualVersion);
+  if (dualVersionResult) {
+    result.dualVersion = dualVersionResult;
   }
   return result;
 }

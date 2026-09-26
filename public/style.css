@@ -306,6 +306,23 @@ button.ghost:disabled {
   bottom: 0;
 }
 
+/* ------------------------------ 双版本共版印刷 ------------------------------ */
+
+.dv-subfield {
+  margin-left: 20px;
+}
+
+#dvTable tfoot td {
+  background: #f4f6fa;
+  font-weight: 600;
+  position: sticky;
+  bottom: 0;
+}
+
+#dvTable tr.dv-split td {
+  background: #fff8ec;
+}
+
 .slot-fit {
   margin-top: 2px;
   font-size: 12px;

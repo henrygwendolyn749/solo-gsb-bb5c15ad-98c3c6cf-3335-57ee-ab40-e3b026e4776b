@@ -52,6 +52,15 @@ const quoteGapBox = document.getElementById('quoteGap');
 const quoteSummary = document.getElementById('quoteSummary');
 const quoteTableBody = document.querySelector('#quoteTable tbody');
 const quoteTableFoot = document.querySelector('#quoteTable tfoot');
+const dualVersionBox = document.getElementById('dualVersionEnabled');
+const dvCopiesAInput = document.getElementById('dvCopiesA');
+const dvCopiesBInput = document.getElementById('dvCopiesB');
+const dvChangedPagesInput = document.getElementById('dvChangedPages');
+const dualVersionCard = document.getElementById('dualVersionCard');
+const dvFormula = document.getElementById('dvFormula');
+const dvSummary = document.getElementById('dvSummary');
+const dvTableBody = document.querySelector('#dvTable tbody');
+const dvTableFoot = document.querySelector('#dvTable tfoot');
 const MAX_QUOTE_ROWS = 8;
 const obsForm = document.getElementById('obsForm');
 const obsSignature = document.getElementById('obsSignature');
@@ -97,6 +106,17 @@ materialPrepBox.addEventListener('change', () => {
   if (materialPrepBox.checked) prepCopiesInput.focus();
 });
 [prepCopiesInput, prepMakereadyInput, prepWasteRateInput, prepSheetsPerPackInput].forEach((el) => {
+  el.disabled = true;
+});
+
+/* 双版本共版参数仅在勾选启用时可填 */
+dualVersionBox.addEventListener('change', () => {
+  [dvCopiesAInput, dvCopiesBInput, dvChangedPagesInput].forEach((el) => {
+    el.disabled = !dualVersionBox.checked;
+  });
+  if (dualVersionBox.checked) dvCopiesAInput.focus();
+});
+[dvCopiesAInput, dvCopiesBInput, dvChangedPagesInput].forEach((el) => {
   el.disabled = true;
 });
 
@@ -232,6 +252,25 @@ function parseChapterStarts(raw) {
     });
 }
 
+/**
+ * 解析 B 版改动页码输入：支持单页与区间（如 "3, 5-8, 12"）。
+ * 区间 token（连字符两侧可有空格，如 "5 - 8"）整体原样上送；其余按逗号 / 空白拆分，
+ * 数字转整数、无法解析的 token 原样上送，完整校验（范围 / 去重 / 区间方向）由服务端执行。
+ */
+function parseChangedPagesInput(raw) {
+  return raw
+    .split(/[,，、;；]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .flatMap((token) => {
+      if (/^\d+\s*[-–—~]\s*\d+$/.test(token)) return [token];
+      return token.split(/\s+/).filter(Boolean).map((t) => {
+        const n = Number(t);
+        return Number.isInteger(n) ? n : t;
+      });
+    });
+}
+
 const state = {
   result: null,
   flat: [], // 展平的 (帖, 张) 索引，便于逐张浏览
@@ -305,6 +344,14 @@ form.addEventListener('submit', async (event) => {
       const { quotes, demandSheets } = collectPurchaseQuotes();
       return { demandSheets, quotes };
     })(),
+    // 双版本共版印刷：仅勾选时上送；改动页码在前端做轻量分词，完整校验由服务端执行
+    dualVersion: dualVersionBox.checked
+      ? {
+          copiesA: Number(dvCopiesAInput.value),
+          copiesB: Number(dvCopiesBInput.value),
+          changedPages: parseChangedPagesInput(dvChangedPagesInput.value),
+        }
+      : undefined,
   };
   // 已录入观察时随生成一并核验；无观察时请求体与原流程完全一致
   const requestBody = state.observations.length ? { ...payload, observations: observationPayload() } : payload;
@@ -377,6 +424,7 @@ function renderAll() {
   renderTable();
   renderMaterialPrep();
   renderPurchaseQuotes();
+  renderDualVersion();
   jsonPreview.textContent = JSON.stringify(state.result, null, 2);
   renderObsPanel();
   draw();
@@ -483,6 +531,13 @@ function renderSummary() {
         cls: 'quote-fail',
       });
     }
+  }
+  if (r.dualVersion && r.dualVersion.enabled) {
+    const t = r.dualVersion.totals;
+    chips.push({
+      text: `双版本共版：印版 ${t.plateCount} 块（共版 ${t.sharedSideCount} 面 · 拆版 ${t.splitSideCount} 面）· 总印次 ${formatSheets(t.impressions)}`,
+      cls: 'quote-ok',
+    });
   }
   summaryBox.innerHTML = '';
   chips.forEach(({ text, cls }) => {
@@ -813,6 +868,84 @@ function renderPurchaseQuotes() {
     footTr.appendChild(td);
   });
   quoteTableFoot.appendChild(footTr);
+}
+
+/* ------------------------------ 双版本共版印刷 ------------------------------ */
+
+/** 渲染双版本共版清单：判定规则、印版 / 印次汇总 chips 与逐面明细表；未启用时隐藏整个区块。 */
+function renderDualVersion() {
+  const dv = state.result.dualVersion;
+  if (!dv || !dv.enabled) {
+    dualVersionCard.hidden = true;
+    return;
+  }
+  dualVersionCard.hidden = false;
+  dvFormula.textContent =
+    `判定规则：${dv.rule}。B 版相对 A 版改动页（去重后 ${dv.changedPageCount} 个）：${dv.changedPages.join('、')}。`;
+
+  const t = dv.totals;
+  const chips = [
+    { text: `A 版 ${formatSheets(dv.copiesA)} 份`, cls: 'prep' },
+    { text: `B 版 ${formatSheets(dv.copiesB)} 份`, cls: 'prep' },
+    { text: `改动页 ${dv.changedPageCount} 个`, cls: 'prep-warn' },
+    { text: `共版 ${t.sharedSideCount} 面 · 拆版 ${t.splitSideCount} 面（共 ${t.sideCount} 面）`, cls: 'prep' },
+    { text: `印版合计 ${t.plateCount} 块（共用 ${t.sharedPlateCount} + 拆分 ${t.splitPlateCount}）`, cls: 'prep-total' },
+    { text: `较全部拆版节省印版 ${t.savedPlateCount} 块`, cls: 'prep-buy' },
+    { text: `总印次 ${formatSheets(t.impressions)}`, cls: 'prep' },
+  ];
+  dvSummary.innerHTML = '';
+  chips.forEach(({ text, cls }) => {
+    const span = document.createElement('span');
+    span.className = 'chip' + (cls ? ` ${cls}` : '');
+    span.textContent = text;
+    dvSummary.appendChild(span);
+  });
+
+  const pageText = (p) => (p === null ? '空白' : `第 ${p} 页`);
+  dvTableBody.innerHTML = '';
+  dv.rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    if (!row.shared) tr.className = 'dv-split';
+    const plateText = row.shared
+      ? '共用 1 块（A+B）'
+      : '拆 2 块：A 版 + B 版';
+    const impressionsText = row.shared
+      ? `${formatSheets(row.plates[0].impressions)}（A ${formatSheets(dv.copiesA)} + B ${formatSheets(dv.copiesB)}）`
+      : `A 版 ${formatSheets(row.plates[0].impressions)} · B 版 ${formatSheets(row.plates[1].impressions)}`;
+    [
+      `第 ${row.signature} 帖`,
+      `第 ${row.sheet} 张`,
+      SIDE_TEXT[row.side],
+      pageText(row.leftPage),
+      pageText(row.rightPage),
+      row.changedPages.length ? row.changedPages.map((p) => `第 ${p} 页`).join('、') : '—',
+      plateText,
+      impressionsText,
+    ].forEach((text) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    dvTableBody.appendChild(tr);
+  });
+
+  dvTableFoot.innerHTML = '';
+  const footTr = document.createElement('tr');
+  [
+    '合计',
+    '—',
+    `${t.sideCount} 面`,
+    '—',
+    '—',
+    `改动 ${t.splitSideCount} 面`,
+    `印版 ${t.plateCount} 块`,
+    `总印次 ${formatSheets(t.impressions)}`,
+  ].forEach((text) => {
+    const td = document.createElement('td');
+    td.textContent = text;
+    footTr.appendChild(td);
+  });
+  dvTableFoot.appendChild(footTr);
 }
 
 /* ------------------------------ 试印核验 ------------------------------ */

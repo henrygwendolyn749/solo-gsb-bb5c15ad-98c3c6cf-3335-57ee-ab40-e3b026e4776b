@@ -606,3 +606,96 @@ test('采购报价组合：未启用备料又未给需求张数 / 非法参数�
     await srv.close();
   }
 });
+
+/* ------------------------------ 双版本共版印刷 ------------------------------ */
+
+test('双版本共版：响应 dualVersion 含逐面印版归属 / 印次与汇总；未启用不带该字段', async () => {
+  const srv = await startServer();
+  try {
+    // BASE 8 页 2 张/帖 1 帖：第 1 张正面 [8,1]、背面 [2,7]；第 2 张正面 [6,3]、背面 [4,5]
+    const res = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { copiesA: 1000, copiesB: 500, changedPages: '2, 5-6' },
+    });
+    assert.equal(res.status, 200);
+    const dv = res.body.dualVersion;
+    assert.equal(dv.enabled, true);
+    assert.equal(dv.copiesA, 1000);
+    assert.equal(dv.copiesB, 500);
+    assert.deepEqual(dv.changedPages, [2, 5, 6]); // 区间展开 + 去重排序
+    assert.equal(dv.rows.length, 4);
+    // 页 2 在第 1 张背面，页 5、6 在第 2 张背面与正面
+    const split = dv.rows.filter((row) => !row.shared);
+    assert.equal(split.length, 3);
+    split.forEach((row) => {
+      assert.deepEqual(row.plates, [
+        { plate: 'A', impressions: 1000 },
+        { plate: 'B', impressions: 500 },
+      ]);
+    });
+    const sharedRow = dv.rows.find((row) => row.shared);
+    assert.deepEqual(sharedRow.plates, [{ plate: 'shared', impressions: 1500 }]);
+    const t = dv.totals;
+    assert.equal(t.sideCount, 4);
+    assert.equal(t.sharedSideCount, 1);
+    assert.equal(t.splitSideCount, 3);
+    assert.equal(t.plateCount, 1 + 3 * 2);
+    assert.equal(t.savedPlateCount, 1);
+    assert.equal(t.impressions, 4 * 1500);
+    // 逐面行定位真实存在于导出的拼版清单中
+    dv.rows.forEach((row) => {
+      const side = res.body.signatures[row.signature - 1].sheets[row.sheet - 1][row.side];
+      assert.equal(side.left.blank ? null : side.left.page, row.leftPage);
+      assert.equal(side.right.blank ? null : side.right.page, row.rightPage);
+    });
+
+    // 未启用：响应不含 dualVersion 字段（原响应不变）
+    const off = await postJson(`${srv.baseUrl}/api/impose`, BASE);
+    assert.equal(off.status, 200);
+    assert.equal('dualVersion' in off.body, false);
+    // 显式关闭同样不带字段
+    const disabled = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { enabled: false, copiesA: 1, copiesB: 1, changedPages: [2] },
+    });
+    assert.equal(disabled.status, 200);
+    assert.equal('dualVersion' in disabled.body, false);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('双版本共版：非法参数返回 400', async () => {
+  const srv = await startServer();
+  try {
+    const outOfRange = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { copiesA: 100, copiesB: 50, changedPages: [2, 9] },
+    });
+    assert.equal(outOfRange.status, 400);
+    assert.match(outOfRange.body.error, /超出范围/);
+
+    const badCopies = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { copiesA: 100, copiesB: 0, changedPages: [2] },
+    });
+    assert.equal(badCopies.status, 400);
+    assert.match(badCopies.body.error, /B 版成品份数/);
+
+    const emptyPages = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { copiesA: 100, copiesB: 50, changedPages: [] },
+    });
+    assert.equal(emptyPages.status, 400);
+    assert.match(emptyPages.body.error, /不能为空/);
+
+    const badRange = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      dualVersion: { copiesA: 100, copiesB: 50, changedPages: ['5-3'] },
+    });
+    assert.equal(badRange.status, 400);
+    assert.match(badRange.body.error, /起点不能大于终点/);
+  } finally {
+    await srv.close();
+  }
+});

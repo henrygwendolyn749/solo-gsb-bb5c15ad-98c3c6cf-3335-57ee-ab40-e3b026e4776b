@@ -24,6 +24,7 @@ app.get('/api/health', (req, res) => {
  *   observations?                                            // 可选，试印核验观察（1～12 条；缺省/空数组不启用）
  *   materialPrep?                                            // 可选，印刷备料 { copies, makereadySheets, processWasteRate, sheetsPerPack }；缺省不启用
  *   purchaseQuotes?                                          // 可选，采购报价组合 { demandSheets?, quotes: [{ supplier, sheetsPerPack, pricePerPackCents, minPacks, maxPacks }] }；缺省不启用
+ *   dualVersion?                                             // 可选，双版本共版印刷 { copiesA, copiesB, changedPages }；缺省不启用
  * }
  * 响应：拼版清单 JSON（与前端「导出拼版清单 JSON」内容一致）；
  * 启用试印核验时顶层带 verification（观察、四种装订×翻转候选的评分与结论）；
@@ -33,7 +34,9 @@ app.get('/api/health', (req, res) => {
  * 以及汇总后的整包采购包数 / 采购张数 / 包余；逐帖取整后再汇总）；
  * 启用采购报价组合时顶层带 purchaseQuotes（需求张数、逐报价采购包数 / 张数 /
  * 金额（分）/ 余量与总价，按「总价→超购→供应商数→录入顺序」取唯一方案；
- * 无可行组合时 feasible 为 false 并给出具体缺口张数）。
+ * 无可行组合时 feasible 为 false 并给出具体缺口张数）；
+ * 启用双版本共版时顶层带 dualVersion（逐张逐面的页码 / 印版归属（共用或 A、B 拆版）/
+ * 各印版印次，以及面数、印版数与总印次汇总）。
  */
 app.post('/api/impose', (req, res) => {
   try {
