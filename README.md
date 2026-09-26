@@ -16,6 +16,7 @@
 - 可选 **试印核验**：对照实物纸张录入 1～12 条观察（帖 / 张 / 正背面 / 左右页位 / 看到的页码或空白 / 内容朝向），服务端用同一输入重算「左/右装订 × 长/短边翻转」四种设置逐条比对，仅唯一零差异组合判定验证通过，并列最优时返回无法判定及并列组合；**无法判定时自动从尚未观察的页位计算「下一处观察建议」**（含定位与各候选预期值）；
 - 可选 **印刷备料**：填写成品份数、每帖开机损耗张数、过程损耗率与每包张数，按拼版结果**各帖实际张数**逐帖计算净用纸，并以 `需领纸 = ceil((净用纸 + 开机损耗) / (1 − 过程损耗率))` **逐帖向上取整**，再汇总后按整包向上采购（**禁止先合并各帖再计算损耗**）；页面逐帖展示净用纸、开机损耗、过程损耗与需领纸及整包采购汇总，导出 JSON 的 `materialPrep` 段附带相同数据；
 - 可选 **采购报价组合**：录入多条本地报价（供应商 / 每包张数 / 每包价格 / 最少 / 最多可购包数），需求张数**默认接入印刷备料的整包采购张数**，也允许**手工填写**；在满足需求与各报价边界的整数包组合中按 **「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序（更早录入优先装满）」** 确定唯一方案，价格一律按**分（整数）精确计算**（不使用浮点比较）；页面逐报价展示采购量 / 金额 / 余量，无可行组合时给出**具体缺口张数**，导出 JSON 的 `purchaseQuotes` 段附带相同数据；
+- 可选 **双版本共版印刷清单**：输入 A、B 两版成品份数及 B 版相对 A 版改动的真实页码（**支持单页与区间**，自动去重并校验页码范围），沿用当前分帖、补白、装订与翻转后的页位**逐张逐面判定**——无改动页的面**共用一块印版**（印次 = A+B），含改动页的面**拆成 A、B 两块印版**（各按自身份数印刷），**同张纸正背面独立判定**；页面逐张逐面展示页码、印版归属与印次汇总，导出 JSON 的 `dualVersion` 段附带相同清单；
 - 画布**逐张显示**纸面、页码、空白页位与翻转方向示意；
 - 一键**导出拼版清单 JSON**（包含适配检查、试印核验、印刷备料与采购报价组合结果）。
 
@@ -367,6 +368,72 @@ npm test           # 运行拼版逻辑单元测试
 
 前端结果区「**采购报价组合**」面板顶部显示需求张数与来源（手工 / 备料接入），逐报价列出每包张数、每包价格、最少 / 最多包数、**采购包数 / 采购张数 / 采购金额 / 余量**，底部汇总行给出采购包数 / 张数 / 总价（元）与超购或缺口；不可行时以红色横幅显示具体缺口，表格按各报价上限展示尽最大可购量。导出的拼版清单 JSON 含同一 `purchaseQuotes` 段。
 
+### 双版本共版印刷清单（dual-version shared-plate printing）
+
+同一本书印 A、B 两个版本，B 版仅相对 A 版改动少量页面时，不必为每一面都各制两块印版。勾选表单中的「双版本共版印刷」并填写以下参数后启用（API 传 `dualVersion: { copiesA, copiesB, changedPages }`）；缺省 / 不传 / `null` / `false` / `{ "enabled": false }` 时**不启用，响应中不含 `dualVersion` 字段，与旧版本完全一致**。
+
+- **A 版成品份数** `copiesA`：≥ 1 的整数；
+- **B 版成品份数** `copiesB`：≥ 1 的整数；
+- **B 版相对 A 版改动的真实页码** `changedPages`：至少 1 个，**支持单页与区间**——
+  - 单页：数字或纯数字字符串（如 `3`、`"3"`）；
+  - 区间：字符串 `"5-8"`（起止页均含；分隔符支持 `-` `~` `～` `–` `—`）；
+  - 数组或逗号 / 空白分隔的整体字符串均可（如 `[3, "5-8", 9]` 或 `"3, 5-8, 9"`）；
+  - 系统**自动去重并升序排列**，每个页码必须在 `1 ~ totalPages` 范围内，越界、区间起点大于终点、空列表或无法识别的条目都会返回 400 明确错误。
+
+判定规则（**沿用当前分帖、补白、装订与翻转后的页位**，逐张逐面独立判定）：
+
+- 某一面（正面或背面）**不含任何改动页** → A、B 两版**共用一块印版**，印次 = `copiesA + copiesB`；
+- 某一面**含有改动页** → 拆成 **A、B 两块印版**，A 版印 `copiesA` 次、B 版印 `copiesB` 次；
+- **同一张纸的正、背面独立判定**（正面含改动页不代表背面也拆版）；补白的空白页不是真实页码，永远不算改动页。
+
+顶层 `dualVersion` 段示例（16 页、每帖 2 张、A 版 1000 份、B 版 300 份、改动页 `3, 5-7, 16`）：
+
+```json
+{
+  "enabled": true,
+  "copiesA": 1000,
+  "copiesB": 300,
+  "changedPages": [3, 5, 6, 7, 16],
+  "changedPageCount": 5,
+  "sheets": [
+    {
+      "signature": 1,
+      "sheet": 1,
+      "front": {
+        "pages": [8, 1],
+        "changed": false,
+        "changedPages": [],
+        "plates": [{ "version": "A+B", "impressions": 1300 }]
+      },
+      "back": {
+        "pages": [2, 7],
+        "changed": true,
+        "changedPages": [7],
+        "plates": [
+          { "version": "A", "impressions": 1000 },
+          { "version": "B", "impressions": 300 }
+        ]
+      }
+    }
+  ],
+  "totals": {
+    "sheetCount": 4,
+    "sideCount": 8,
+    "sharedSides": 4,
+    "splitSides": 4,
+    "sharedPlates": 4,
+    "versionPlates": 8,
+    "plateCount": 12,
+    "impressionsShared": 5200,
+    "impressionsA": 4000,
+    "impressionsB": 1200,
+    "totalImpressions": 10400
+  }
+}
+```
+
+前端结果区「**双版本共版印刷清单**」面板逐张逐面列出帖、张、面、页码、印版归属（共用版 A+B / 拆版 A、B，含本面改动页）与印次，顶部 chips 与底部合计行给出共用面 / 拆版面数、印版总数与印次汇总；导出的拼版清单 JSON 含同一 `dualVersion` 段。双版本共版只读取拼版结果的页位，固定 / 均衡 / 章节优先分帖均可启用，不影响页码拼版本身，也可与印刷备料、采购报价组合等模块同时启用。
+
 ## API
 
 ### `POST /api/impose`
@@ -408,6 +475,11 @@ npm test           # 运行拼版逻辑单元测试
       { "supplier": "华泰纸行", "sheetsPerPack": 500, "pricePerPackCents": 9800, "minPacks": 0, "maxPacks": 20 },
       { "supplier": "恒丰纸业", "sheetsPerPack": 500, "pricePerPackCents": 9500, "minPacks": 0, "maxPacks": 20 }
     ]
+  },
+  "dualVersion": {
+    "copiesA": 1000,
+    "copiesB": 300,
+    "changedPages": [3, "5-7", 16]
   }
 }
 ```
@@ -442,6 +514,10 @@ npm test           # 运行拼版逻辑单元测试
   - `quotes`：1～8 条报价，每条含 `supplier`（非空、不重复，≤ 50 字符）/ `sheetsPerPack`（≥ 1 整数）/ `pricePerPackCents`（每包价格，**分为单位的非负整数**，如 `1234` = 12.34 元）/ `minPacks`（≥ 0 整数）/ `maxPacks`（≥ 1 且 ≥ `minPacks` 的整数）；
   - 在满足需求与各报价边界的组合中按「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序（更早录入优先装满）」确定唯一方案；无可行组合时响应 200 且 `purchaseQuotes.feasible` 为 `false`，附 `gapSheets` 缺口与按上限给出的尽最大可购行；
   - 报价非数组 / 为空 / 超过 8 条、供应商为空或重复、每包张数非正整数、价格为负或非整数分、包数边界非法等均返回 400 明确错误。
+- `dualVersion`：**可选**，双版本共版印刷参数对象（缺省 / `null` / `false` 不启用，响应不含 `dualVersion` 字段，与旧版本完全一致）。字段：
+  - `copiesA` / `copiesB`：A / B 版成品份数，≥ 1 的整数；
+  - `changedPages`：B 版相对 A 版改动的真实页码（至少 1 个），支持单页（`3`）与区间（`"5-8"`，起止均含），数组或逗号分隔字符串均可；自动去重并升序，每个页码必须在 1 ~ totalPages 范围内；
+  - 逐张逐面判定：无改动页的面共用 1 块印版（印次 A+B），含改动页的面拆 A、B 两块印版各按自身份数印刷，同张纸正背面独立判定；份数非正整数、改动页为空 / 越界 / 区间起点大于终点 / 无法识别等均返回 400 明确错误。
 
 后两个爬移参数任一为 0（或不传）时不做爬移补偿，所有页位 `offsetMm` 为 0，旧调用方无需改动。
 
@@ -561,7 +637,9 @@ npm test           # 运行拼版逻辑单元测试
 
 启用采购报价组合时，顶层增加 `purchaseQuotes`（结构与示例见上文「采购报价组合」一节）：`demandSheets` / `demandSource`（`manual` 手工 / `materialPrep` 接入备料整包采购张数）/ 回显的 `quotes[]`；可行时 `feasible: true`，逐报价 `rows[]` 给出 `packs`（采购包数）/ `sheets`（采购张数）/ `amountCents`（金额，分）/ `remainingPacks` / `remainingSheets`（可购余量），`totals` 给出 `totalPacks` / `totalSheets` / `overPurchaseSheets`（超购张数）/ `totalCostCents`（总价，分）/ `supplierCount` / `suppliers`；无可行组合时 `feasible: false`，给出 `gapSheets`（缺口张数）/ `reason` / `maxPurchasableSheets`，`rows[]` 按各报价上限给出尽最大可购量（余量为 0）。未启用时响应中不含 `purchaseQuotes` 字段。
 
-参数非法时返回 `400` 与错误信息（含纸张厚度 / 最大补偿量为负，尺寸参数为负、非数字或只提供部分尺寸，`balancedSplit` / `chapterSplit` 非布尔值，两种分帖模式同时启用，章节起始页非数组 / 为空 / 非整数 / 重复 / 未递增 / 越界，观察记录非数组 / 超过 12 条 / 索引越界 / 重复观察 / 字段非法，`productionMarks` 非布尔值、未启用适配检查就开启生产标记、`markSizeMm` 非正数或超过 100mm，备料参数 `materialPrep` 非对象、成品份数 / 每包张数非正整数、开机损耗为负、过程损耗率不在 [0, 1)，以及采购报价 `purchaseQuotes` 非对象、未启用备料又未给需求张数、报价非数组 / 为空 / 超过 8 条、供应商为空或重复、每包张数非正整数、每包价格（分）为负或非整数、包数边界非法（< 0 / < 1 / 最多少于最少）等情况）。另提供 `GET /api/health` 健康检查。
+启用双版本共版印刷时，顶层增加 `dualVersion`（结构与示例见上文「双版本共版印刷清单」一节）：`copiesA` / `copiesB` / 去重升序后的 `changedPages` 与 `changedPageCount`；`sheets[]` 逐张逐面给出 `pages`（左右页位页码，补白为 `null`）/ `changed` / `changedPages`（本面改动页）/ `plates`（印版归属与印次——共用面为 1 块 `A+B` 版，拆版面为 `A`、`B` 两块各按自身份数）；`totals` 汇总张数 / 面数 / 共用面 / 拆版面 / 印版数（共用版 + 版本版）与印次（共用版印次、A 版印次、B 版印次、总印次）。未启用时响应中不含 `dualVersion` 字段。
+
+参数非法时返回 `400` 与错误信息（含纸张厚度 / 最大补偿量为负，尺寸参数为负、非数字或只提供部分尺寸，`balancedSplit` / `chapterSplit` 非布尔值，两种分帖模式同时启用，章节起始页非数组 / 为空 / 非整数 / 重复 / 未递增 / 越界，观察记录非数组 / 超过 12 条 / 索引越界 / 重复观察 / 字段非法，`productionMarks` 非布尔值、未启用适配检查就开启生产标记、`markSizeMm` 非正数或超过 100mm，备料参数 `materialPrep` 非对象、成品份数 / 每包张数非正整数、开机损耗为负、过程损耗率不在 [0, 1)，采购报价 `purchaseQuotes` 非对象、未启用备料又未给需求张数、报价非数组 / 为空 / 超过 8 条、供应商为空或重复、每包张数非正整数、每包价格（分）为负或非整数、包数边界非法（< 0 / < 1 / 最多少于最少），以及双版本共版 `dualVersion` 非对象、份数非 1 ~ 1 亿整数、改动页码为空 / 非数组非字符串 / 含无法识别条目 / 区间起点大于终点 / 页码超出 1 ~ totalPages 范围等情况）。另提供 `GET /api/health` 健康检查。
 
 调用示例（生成带双面生产标记的拼版清单，460×330 纸张放 210×297 成品页，短边翻转）：
 
@@ -627,6 +705,25 @@ curl -s -X POST http://localhost:8080/api/impose \
 #                { "supplier": "恒丰纸业", "packs": 9, "amountCents": 85500 } ] }
 ```
 
+调用示例（双版本共版印刷清单：16 页、每帖 2 张，A 版 1000 份、B 版 300 份，B 版改动页 3、5-7、16）：
+
+```bash
+curl -s -X POST http://localhost:8080/api/impose \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "totalPages": 16,
+    "sheetsPerSignature": 2,
+    "binding": "left",
+    "flip": "short",
+    "dualVersion": { "copiesA": 1000, "copiesB": 300, "changedPages": "3, 5-7, 16" }
+  }' | jq '.dualVersion | { changedPages, totals }'
+# => { "changedPages": [3, 5, 6, 7, 16],
+#      "totals": { "sheetCount": 4, "sideCount": 8, "sharedSides": 4, "splitSides": 4,
+#                  "sharedPlates": 4, "versionPlates": 8, "plateCount": 12,
+#                  "impressionsShared": 5200, "impressionsA": 4000,
+#                  "impressionsB": 1200, "totalImpressions": 10400 } }
+```
+
 ## 目录结构
 
 ```
@@ -637,7 +734,8 @@ curl -s -X POST http://localhost:8080/api/impose \
 ├── src/verification.js    # 试印核验（观察校验、四种装订×翻转重算比对、候选排序与结论）
 ├── src/materialPrep.js    # 印刷备料（逐帖净用纸 / 开机损耗 / 过程损耗 / 需领纸 ceil、整包采购汇总）
 ├── src/purchaseQuote.js   # 采购报价组合（分整数计价、边界约束、四级排序唯一方案、缺口、有界 DP 求解）
-├── public/                # 前端（原生 Canvas 逐张绘制、原始/补偿页位叠加、适配标记、生产标记、试印核验面板、印刷备料面板、采购报价组合面板、JSON 导出）
+├── src/dualVersion.js     # 双版本共版印刷清单（逐张逐面判定改动页、共用版 / 拆版、印版与印次汇总）
+├── public/                # 前端（原生 Canvas 逐张绘制、原始/补偿页位叠加、适配标记、生产标记、试印核验面板、印刷备料面板、采购报价组合面板、双版本共版面板、JSON 导出）
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
@@ -648,6 +746,7 @@ curl -s -X POST http://localhost:8080/api/impose \
 ├── test/verification.test.js
 ├── test/materialPrep.test.js
 ├── test/purchaseQuote.test.js
+├── test/dualVersion.test.js
 ├── test/api.test.js
 ├── Dockerfile
 └── docker-compose.yml

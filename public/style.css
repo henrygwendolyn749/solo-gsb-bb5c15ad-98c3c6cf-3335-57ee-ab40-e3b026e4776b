@@ -306,6 +306,34 @@ button.ghost:disabled {
   bottom: 0;
 }
 
+/* ------------------------------ 双版本共版印刷清单 ------------------------------ */
+
+.summary .chip.dv {
+  background: #e3f7f4;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.summary .chip.dv-split {
+  background: #fff4e0;
+  color: #b35900;
+}
+
+.dv-subfield {
+  margin-left: 20px;
+}
+
+#dvTable tr.dv-split-row td {
+  background: #fffaf0;
+}
+
+#dvTable tfoot td {
+  background: #f4f6fa;
+  font-weight: 600;
+  position: sticky;
+  bottom: 0;
+}
+
 .slot-fit {
   margin-top: 2px;
   font-size: 12px;

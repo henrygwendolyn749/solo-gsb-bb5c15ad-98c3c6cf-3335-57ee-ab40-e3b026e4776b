@@ -52,6 +52,15 @@ const quoteGapBox = document.getElementById('quoteGap');
 const quoteSummary = document.getElementById('quoteSummary');
 const quoteTableBody = document.querySelector('#quoteTable tbody');
 const quoteTableFoot = document.querySelector('#quoteTable tfoot');
+const dualVersionBox = document.getElementById('dualVersionEnabled');
+const dvCopiesAInput = document.getElementById('dvCopiesA');
+const dvCopiesBInput = document.getElementById('dvCopiesB');
+const dvChangedPagesInput = document.getElementById('dvChangedPages');
+const dualVersionCard = document.getElementById('dualVersionCard');
+const dvFormula = document.getElementById('dvFormula');
+const dvSummary = document.getElementById('dvSummary');
+const dvTableBody = document.querySelector('#dvTable tbody');
+const dvTableFoot = document.querySelector('#dvTable tfoot');
 const MAX_QUOTE_ROWS = 8;
 const obsForm = document.getElementById('obsForm');
 const obsSignature = document.getElementById('obsSignature');
@@ -97,6 +106,17 @@ materialPrepBox.addEventListener('change', () => {
   if (materialPrepBox.checked) prepCopiesInput.focus();
 });
 [prepCopiesInput, prepMakereadyInput, prepWasteRateInput, prepSheetsPerPackInput].forEach((el) => {
+  el.disabled = true;
+});
+
+/* 双版本共版印刷参数仅在勾选启用时可填 */
+dualVersionBox.addEventListener('change', () => {
+  [dvCopiesAInput, dvCopiesBInput, dvChangedPagesInput].forEach((el) => {
+    el.disabled = !dualVersionBox.checked;
+  });
+  if (dualVersionBox.checked) dvCopiesAInput.focus();
+});
+[dvCopiesAInput, dvCopiesBInput, dvChangedPagesInput].forEach((el) => {
   el.disabled = true;
 });
 
@@ -305,6 +325,14 @@ form.addEventListener('submit', async (event) => {
       const { quotes, demandSheets } = collectPurchaseQuotes();
       return { demandSheets, quotes };
     })(),
+    // 双版本共版印刷：仅勾选时上送；改动页码原文上送（支持单页与区间），由服务端解析、去重并校验范围
+    dualVersion: dualVersionBox.checked
+      ? {
+          copiesA: Number(dvCopiesAInput.value),
+          copiesB: Number(dvCopiesBInput.value),
+          changedPages: dvChangedPagesInput.value.trim(),
+        }
+      : undefined,
   };
   // 已录入观察时随生成一并核验；无观察时请求体与原流程完全一致
   const requestBody = state.observations.length ? { ...payload, observations: observationPayload() } : payload;
@@ -377,6 +405,7 @@ function renderAll() {
   renderTable();
   renderMaterialPrep();
   renderPurchaseQuotes();
+  renderDualVersion();
   jsonPreview.textContent = JSON.stringify(state.result, null, 2);
   renderObsPanel();
   draw();
@@ -483,6 +512,13 @@ function renderSummary() {
         cls: 'quote-fail',
       });
     }
+  }
+  if (r.dualVersion && r.dualVersion.enabled) {
+    const t = r.dualVersion.totals;
+    chips.push({
+      text: `双版本共版：${formatSheets(t.plateCount)} 块印版 · ${formatSheets(t.totalImpressions)} 印次（共用面 ${t.sharedSides} · 拆版面 ${t.splitSides}）`,
+      cls: 'dv',
+    });
   }
   summaryBox.innerHTML = '';
   chips.forEach(({ text, cls }) => {
@@ -813,6 +849,90 @@ function renderPurchaseQuotes() {
     footTr.appendChild(td);
   });
   quoteTableFoot.appendChild(footTr);
+}
+
+/* ------------------------------ 双版本共版印刷清单 ------------------------------ */
+
+/** 渲染双版本共版印刷清单：规则说明、印版 / 印次汇总 chips 与逐张逐面印版归属表；未启用时隐藏整个区块。 */
+function renderDualVersion() {
+  const dv = state.result.dualVersion;
+  if (!dv || !dv.enabled) {
+    dualVersionCard.hidden = true;
+    return;
+  }
+  dualVersionCard.hidden = false;
+  const sharedImpressions = dv.copiesA + dv.copiesB;
+  dvFormula.textContent =
+    `A 版 ${formatSheets(dv.copiesA)} 份 · B 版 ${formatSheets(dv.copiesB)} 份 · B 版改动页 [${dv.changedPages.join(', ')}]（共 ${dv.changedPageCount} 页）；` +
+    `无改动页的面共用 1 块印版（印次 A+B = ${formatSheets(sharedImpressions)}），含改动页的面拆成 A、B 两块印版` +
+    `（A 版各印 ${formatSheets(dv.copiesA)} 次、B 版各印 ${formatSheets(dv.copiesB)} 次），同张纸正背面独立判定。`;
+
+  const t = dv.totals;
+  const chips = [
+    { text: `共 ${t.sheetCount} 张 · ${t.sideCount} 面`, cls: 'prep' },
+    { text: `共用面 ${t.sharedSides} · 拆版面 ${t.splitSides}`, cls: t.splitSides > 0 ? 'dv-split' : 'prep' },
+    { text: `印版合计 ${t.plateCount} 块（共用版 ${t.sharedPlates} + 版本版 ${t.versionPlates}）`, cls: 'prep-total' },
+    { text: `印次合计 ${formatSheets(t.totalImpressions)}（共用版 ${formatSheets(t.impressionsShared)} + A 版 ${formatSheets(t.impressionsA)} + B 版 ${formatSheets(t.impressionsB)}）`, cls: 'prep-buy' },
+  ];
+  dvSummary.innerHTML = '';
+  chips.forEach(({ text, cls }) => {
+    const span = document.createElement('span');
+    span.className = 'chip' + (cls ? ` ${cls}` : '');
+    span.textContent = text;
+    dvSummary.appendChild(span);
+  });
+
+  dvTableBody.innerHTML = '';
+  dv.sheets.forEach((row) => {
+    [
+      { name: '正面', side: row.front },
+      { name: '背面', side: row.back },
+    ].forEach(({ name, side }) => {
+      const tr = document.createElement('tr');
+      if (side.changed) tr.className = 'dv-split-row';
+      const tdSig = document.createElement('td');
+      tdSig.textContent = name === '正面' ? `第 ${row.signature} 帖` : '';
+      tr.appendChild(tdSig);
+      [String(row.sheet), name].forEach((text) => {
+        const td = document.createElement('td');
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      const tdPages = document.createElement('td');
+      tdPages.textContent = side.pages.map((p) => (p === null ? '空白' : `第 ${p} 页`)).join('、');
+      if (side.changed) {
+        tdPages.title = `本面改动页：${side.changedPages.join('、')}`;
+      }
+      tr.appendChild(tdPages);
+      const tdPlates = document.createElement('td');
+      tdPlates.textContent = side.changed
+        ? `拆版：A 版 + B 版（改动页 ${side.changedPages.join('、')}）`
+        : '共用版（A+B）';
+      tr.appendChild(tdPlates);
+      const tdImpressions = document.createElement('td');
+      tdImpressions.textContent = side.changed
+        ? `A ${formatSheets(dv.copiesA)} + B ${formatSheets(dv.copiesB)}`
+        : formatSheets(sharedImpressions);
+      tr.appendChild(tdImpressions);
+      dvTableBody.appendChild(tr);
+    });
+  });
+
+  dvTableFoot.innerHTML = '';
+  const footTr = document.createElement('tr');
+  [
+    '合计',
+    '—',
+    '—',
+    `共用面 ${t.sharedSides} · 拆版面 ${t.splitSides}`,
+    `印版 ${t.plateCount} 块`,
+    `${formatSheets(t.totalImpressions)} 印次`,
+  ].forEach((text) => {
+    const td = document.createElement('td');
+    td.textContent = text;
+    footTr.appendChild(td);
+  });
+  dvTableFoot.appendChild(footTr);
 }
 
 /* ------------------------------ 试印核验 ------------------------------ */

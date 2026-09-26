@@ -154,6 +154,24 @@
           供应商名称不可重复；最少包数为 0 表示不设下限。最多录入 8 条报价。
         </p>
       </div>
+      <div class="field checkbox-field">
+        <label for="dualVersionEnabled">
+          <input id="dualVersionEnabled" type="checkbox">
+          <span>双版本共版印刷（A、B 两版共版：无改动页的面共用一块印版按 A+B 印次印刷，含改动页的面拆成 A、B 两块印版各按自身份数印刷，同张纸正背面独立判定）</span>
+        </label>
+      </div>
+      <div class="field dv-subfield">
+        <label for="dvCopiesA">A 版成品份数</label>
+        <input id="dvCopiesA" type="number" min="1" max="100000000" step="1" value="1000" disabled>
+      </div>
+      <div class="field dv-subfield">
+        <label for="dvCopiesB">B 版成品份数</label>
+        <input id="dvCopiesB" type="number" min="1" max="100000000" step="1" value="500" disabled>
+      </div>
+      <div class="field dv-subfield">
+        <label for="dvChangedPages">B 版相对 A 版改动的页码（单页 / 区间，逗号分隔）</label>
+        <input id="dvChangedPages" type="text" placeholder="如 3, 5-7, 9" disabled>
+      </div>
       <div class="field actions">
         <button type="submit">生成拼版</button>
       </div>
@@ -193,6 +211,15 @@
       价格提交时精确换算为<strong>分（整数）</strong>比较，杜绝浮点误差。
       结果区逐报价展示采购包数 / 张数 / 金额与可购余量；<strong>无可行组合时给出具体缺口张数</strong>（并按各报价上限列出尽最大可购量）；
       导出的拼版清单 JSON 在 <code>purchaseQuotes</code> 段附带相同数据。不勾选时响应与之前完全一致。
+    </p>
+    <p class="hint">
+      双版本共版印刷（可选）：勾选后填写 A、B 两版成品份数，以及 B 版相对 A 版改动的真实页码
+      （支持单页与区间，逗号分隔，如 <code>3, 5-7, 9</code>；自动去重并校验页码范围）。
+      系统沿用当前分帖、补白、装订与翻转后的页位，<strong>逐张逐面</strong>判定是否含改动页：
+      无改动页的面<strong>共用一块印版</strong>（印次 = A 版份数 + B 版份数），含改动页的面<strong>拆成 A、B 两块印版</strong>
+      （各按自身份数印刷），同一张纸的正、背面独立判定（补白的空白页不算改动页）。
+      结果区逐张逐面展示页码、印版归属与印次并给出印版数 / 印次汇总；
+      导出的拼版清单 JSON 在 <code>dualVersion</code> 段附带相同清单。不勾选时响应与之前完全一致。
     </p>
     <p class="error" id="errorBox" hidden></p>
   </section>
@@ -301,6 +328,23 @@
               <th>#</th><th>供应商</th><th>每包张数</th><th>每包价格</th>
               <th>最少 / 最多包数</th><th>采购包数</th><th>采购张数</th>
               <th>采购金额</th><th>余量（可再购）</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section id="dualVersionCard" class="prep-card" hidden>
+      <h2>双版本共版印刷清单</h2>
+      <p class="hint" id="dvFormula"></p>
+      <div class="summary" id="dvSummary"></div>
+      <div class="table-wrap">
+        <table id="dvTable">
+          <thead>
+            <tr>
+              <th>帖</th><th>张</th><th>面</th><th>页码</th><th>印版归属</th><th>印次</th>
             </tr>
           </thead>
           <tbody></tbody>
